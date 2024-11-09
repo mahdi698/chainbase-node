@@ -1,0 +1,315 @@
+this is based on Chainbase's official guidelines
+
+
+
+
+
+
+
+Install Dependencies:
+
+# update packages
+sudo apt update && sudo apt upgrade -y
+
+# install docker
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install docker-ce docker-ce-cli containerd.io
+docker version
+
+# install docker-compose
+VER=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep tag_name | cut -d '"' -f 4)
+
+curl -L "https://github.com/docker/compose/releases/download/"$VER"/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+
+chmod +x /usr/local/bin/docker-compose
+docker-compose --version
+
+# install eigenlayer cli
+curl -sSfL https://raw.githubusercontent.com/layr-labs/eigenlayer-cli/master/scripts/install.sh | sh -s
+
+export PATH=$PATH:~/bin
+
+eigenlayer --version
+
+# clone avs repo
+git clone https://github.com/chainbase-labs/chainbase-avs-contracts.git
+cd chainbase-avs-contracts
+
+Wallet
+
+create a new EVM wallet and fund it with at least 1 ETH faucet on the holesky chain.
+
+you can obtain ETH faucet here
+
+https://cloud.google.com/application/web3/faucet/ethereum/holesky
+
+Import wallet
+
+replace <hex-private-key> with your wallet private key
+
+eigenlayer operator keys import --key-type ecdsa chainbase <hex-private-key>
+
+# move eigenlayer ecdsa file to current directory
+cp /root/.eigenlayer/operator_keys/chainbase.ecdsa.key.json .
+
+Output
+
+This is a prompt asking you to enter a password to encrypt the ECDSA private key.
+
+
+
+
+
+
+
+Config & Register operator
+
+
+
+
+
+create the config file
+
+eigenlayer operator config create
+
+when prompted, set operator address, holesky rpc URL
+
+The command will create two files: operator.yaml and metadata.json.
+
+
+
+
+
+
+
+edit metadata.json and set your operator name, logo image public URL, website, and Twitter account. upload the file to a publicly accessible location.
+
+Operator registration only supports .png images for now and must be less than 1MB in size.
+
+you can use my config file as an example: https://github.com/sarox0987/chainbase-metadata
+
+
+
+open operator.yaml file and set your metadat.json public URL for field metadata_url
+
+
+
+
+
+
+
+if you're using github for hosting make sure you link to raw file (example) rather than the github repo URL (example).
+
+
+
+
+
+register operator
+
+# register
+eigenlayer operator register operator.yaml
+
+# check status
+eigenlayer operator status operator.yaml
+
+
+
+
+
+
+
+
+
+
+
+Install Chainbase-avs-cli
+
+curl -LO https://github.com/chainbase-labs/chainbase-avs-contracts/releases/download/v0.1.7/chainbase-avs-cli_Linux_x86_64.tar.gz
+
+tar -xzf chainbase-avs-cli_Linux_x86_64.tar.gz
+git checkout ff606
+
+rename avs.toml.example to avs.toml 
+
+mv avs.toml.example avs.toml
+
+ open avs.toml file set ./operator.yaml for field operator_config_path and your eigenlayer password for field keystore_pwd
+
+
+
+
+
+
+
+
+
+Register your operator as a Chainbase AVS operator
+
+./chainbase-avs-cli register --config avs.toml
+
+
+
+before running docker containers open operator.yaml  file and replace private_key_store_path field value with /opt/chainbase.ecdsa.key.json
+
+
+
+
+
+
+
+
+
+Run your AVS
+
+# remove docker-compose file
+rm docker-compose.yml
+
+# create and open fresh docker-compose file
+nano docker-compose.yml
+
+
+# copy & paste this configs into the docker-compose file
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    user: root
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - '9091:9090'
+
+  flink-jobmanager:
+    image: flink:latest
+    user: root
+    container_name: flink-jobmanager
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+
+  flink-taskmanager:
+    image: flink:latest
+    user: root
+    container_name: flink-taskmanager
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+
+  chainbase-node:
+    image: repository.chainbase.com/network/chainbase-node:v0.1.7
+    container_name: chainbase-node
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./operator.yaml:/root/operator.yaml
+      - ./chainbase.ecdsa.key.json:/opt/chainbase.ecdsa.key.json
+      - ./avs.toml:/root/avs.toml
+    environment:
+      - OPERATOR_CONFIG_PATH=/opt/operator.yaml
+      - EIGEN_KEY_PATH=/opt/chainbase.ecdsa.key.json
+      - AVS_CONFIG_PATH=/root/avs.toml
+    depends_on:
+      - prometheus
+      - flink-jobmanager
+      - flink-taskmanager
+
+
+# run docker-compose
+docker-compose up -d
+
+make sure all four docker containers are running with docker ps command
+
+
+
+
+
+
+
+make sure your operator is healthy
+
+curl -i localhost:8080/eigen/node/health
+
+
+
+
+
+
+
+find your operator link
+
+eigenlayer operator status operator.yaml
+
+and send it to Chainbase discord server as a proof 
+
+
+
+
+
+
+
+and fill out this form:
+
+
+
+
+
+
+
+Update:
+
+download and run the script
+
+curl -LOs https://raw.githubusercontent.com/sarox0987/chainbase-metadata/main/update.sh && bash ./update.sh 
+
+pass your operator address and ecdsa password that you setted before to the script
+
+
+
+
+
+
+
+the script will apply the changes that are need and start containers again
+
+
+
+
+
+
+
+make sure all four docker containers are running
+
+docker ps
+
+
+
+
+
+
+
+
+
+check chainbase-node and prometheus
+
+# check chainbase-node
+curl http://localhost:9092/metrics
+
+#check prometheus
+curl http://localhost:9091/metrics
+
+you have to see a response like this for both
